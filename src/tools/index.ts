@@ -685,6 +685,9 @@ export class ToolHandler extends Injectable {
     };
   }
 
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
   private async createConversation(args: unknown): Promise<CallToolResult> {
     const input = CreateConversationInputSchema.parse(args);
@@ -697,7 +700,7 @@ export class ToolHandler extends Injectable {
     const agentUserId = agentReplyThread.user;
     const agentMessageText = agentReplyThread.text;
 
-    logger.info('Starting Help Scout Three-Step for outbound conversation...');
+    logger.info('Starting Help Scout outbound conversation process...');
 
     // --- Step 1: Create the conversation container ---
     const creationPayload = {
@@ -716,31 +719,45 @@ export class ToolHandler extends Injectable {
 
     const creationResponse = await helpScoutClient.post('/conversations', creationPayload as Record<string, unknown>);
     const locationHeader = creationResponse.headers.location;
-    if (!locationHeader) {
-      throw new Error('Failed to create conversation: No Location header in response.');
-    }
+    if (!locationHeader) throw new Error('Failed to create conversation: No Location header in response.');
+    
     const conversationId = locationHeader.split('/').pop();
-    if (!conversationId) {
-      throw new Error('Failed to parse new conversation ID from Location header.');
-    }
+    if (!conversationId) throw new Error('Failed to parse new conversation ID from Location header.');
+    
     logger.info(`Step 1 complete. Created conversation container: ${conversationId}`);
 
-    // --- Step 2: Fetch the new conversation to get the generated customer ID ---
-    // We need to define a minimal Conversation type here for TypeScript
-    type Conversation = { id: string; customer?: { id: number } };
-    const newConversation = await helpScoutClient.get<Conversation>(`/conversations/${conversationId}`);
-    const customerId = newConversation.customer?.id;
+    // --- Step 2: Fetch the new conversation with a retry mechanism ---
+    let customerId: number | undefined;
+    const maxRetries = 3;
+    const retryDelay = 750; // 750 milliseconds
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      logger.info(`Fetching conversation details (Attempt ${attempt}/${maxRetries})...`);
+      type Conversation = { id: string; customer?: { id: number } };
+      const newConversation = await helpScoutClient.get<Conversation>(`/conversations/${conversationId}`);
+      
+      if (newConversation.customer?.id) {
+        customerId = newConversation.customer.id;
+        logger.info(`Step 2 complete. Fetched customer ID: ${customerId}`);
+        break; // Success! Exit the loop.
+      }
+
+      if (attempt < maxRetries) {
+        logger.warn(`Customer ID not available yet. Retrying in ${retryDelay}ms...`);
+        await this.sleep(retryDelay);
+      }
+    }
 
     if (!customerId) {
-      throw new Error(`Could not retrieve customer ID for new conversation ${conversationId}.`);
+      // This will only be reached if all retries fail.
+      throw new Error(`Could not retrieve customer ID for new conversation ${conversationId} after ${maxRetries} attempts.`);
     }
-    logger.info(`Step 2 complete. Fetched customer ID: ${customerId}`);
 
     // --- Step 3: Post the actual agent reply with all correct IDs ---
     const replyPayload = {
       text: agentMessageText,
       user: agentUserId,
-      customer: { id: customerId }, // <-- Using the customerId we just fetched!
+      customer: { id: customerId },
     };
 
     await helpScoutClient.post(`/conversations/${conversationId}/reply`, replyPayload);
@@ -764,7 +781,7 @@ export class ToolHandler extends Injectable {
       }],
     };
   }
-  
+
   private async deleteConversation(args: unknown): Promise<CallToolResult> {
     const input = DeleteConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
