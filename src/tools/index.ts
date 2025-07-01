@@ -126,19 +126,12 @@ export class ToolHandler extends Injectable {
       },
       {
         name: 'createConversation',
-        description: 'Creates a new outbound conversation TO a customer. WORKFLOW: 1. Call `getCurrentUser()` to get the `userId`. 2. Call this tool with the `userId` and ensure the first thread is of type `reply` and includes the `user` ID.',
+        description: 'Creates a new outbound conversation TO a customer. WORKFLOW: 1. Call `getCurrentUser()` to get the agent\'s `userId`. 2. Call this tool, placing the `userId` inside the `user` field of the initial `reply` thread.',
         inputSchema: {
           type: 'object',
           properties: {
-            // ... (keep existing properties like mailboxId, subject, customer)
-            mailboxId: {
-              type: 'number',
-              description: 'ID of the inbox where the conversation will be created. Use searchInboxes to find this.',
-            },
-            subject: {
-              type: 'string',
-              description: 'The subject line of the new conversation.',
-            },
+            mailboxId: { type: 'number', description: 'ID of the inbox for the conversation.' },
+            subject: { type: 'string', description: 'The subject line.' },
             customer: {
               type: 'object',
               properties: {
@@ -149,30 +142,32 @@ export class ToolHandler extends Injectable {
               },
               description: 'The customer the conversation is being sent TO.',
             },
+            type: { type: 'string', enum: ['email', 'chat', 'phone'], description: "The type of conversation, almost always 'email'." },
+            status: { type: 'string', enum: ['active', 'pending', 'closed'], description: 'The initial status.' },
             threads: {
               type: 'array',
               items: {
                 type: 'object',
                 properties: {
-                  type: { enum: ['reply'], description: "To start an outbound conversation, this MUST be 'reply'." },
+                  type: { enum: ['reply'], description: "MUST be 'reply' to start an outbound conversation." },
                   text: { type: 'string', description: 'Content of the message.' },
+                  user: { type: 'number', description: "The agent's ID from `getCurrentUser()`. This is REQUIRED for a reply." },
                 },
-                required: ['type', 'text'],
+                required: ['type', 'text', 'user'],
               },
-              description: 'The initial message to send. Must be a single thread of type `reply`.',
+              description: 'The initial message. Must be a single thread of type `reply` containing the agent\'s user ID.',
             },
-            status: {
-              type: 'string',
-              enum: ['active', 'pending', 'closed'],
-              description: 'The initial status of the conversation.',
+            tags: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'A list of tags to add to the conversation.',
             },
-            userId: { // <-- Make it clear this is required for this action
+            assignTo: {
               type: 'number',
-              description: 'The ID of the agent sending the message. Get this from `getCurrentUser()`.',
+              description: 'ID of the user to assign the conversation to. Use null for unassigned.',
             },
-            // ... (other optional properties like tags, assignTo)
           },
-          required: ['mailboxId', 'subject', 'customer', 'threads', 'status', 'userId'],
+          required: ['mailboxId', 'subject', 'customer', 'type', 'status', 'threads'],
         },
       },
       {
@@ -691,29 +686,12 @@ export class ToolHandler extends Injectable {
   }
 
 
-  // AFTER (The Corrected, Beautiful Version)
   private async createConversation(args: unknown): Promise<CallToolResult> {
-    const input = CreateConversationInputSchema.parse(args);
+    // The schema now perfectly matches the API payload structure.
+    const payload = CreateConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
 
-    // THE FIX: Destructure userId and the rest of the input into separate variables.
-    const { userId, ...restOfInput } = input;
-
-    // Ensure the thread has the user ID if it's a reply
-    const processedThreads = restOfInput.threads.map(thread => {
-      if (thread.type === 'reply' && userId) {
-        // Use the standalone userId variable here. It's perfectly typed!
-        return { ...thread, user: userId };
-      }
-      return thread;
-    });
-
-    // Construct the final payload without the top-level userId. No 'delete' needed!
-    const payload = {
-      ...restOfInput,
-      threads: processedThreads,
-    };
-
+    // No more complex logic needed. We just send the validated payload.
     await helpScoutClient.post(
       '/conversations',
       payload as Record<string, unknown>

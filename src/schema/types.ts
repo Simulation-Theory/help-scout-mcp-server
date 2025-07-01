@@ -178,7 +178,6 @@ export const CreateConversationInputSchema = z.object({
   tags: z.array(z.string()).optional(),
   assignTo: z.number().nullable().optional(),
   imported: z.boolean().optional(),
-  userId: z.number().optional(), // <-- ADD THIS to pass the agent's ID
 });
 
 // Schema for the replyToConversation tool
