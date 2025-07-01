@@ -184,6 +184,7 @@ export const ReplyToConversationInputSchema = z.object({
   conversationId: z.string(),
   text: z.string(),
   userId: z.number(),
+  customerId: z.number(),
   // A reply is technically a 'message' thread type in the API
   // but we can simplify the tool to just take text.
   // You could expand this to include assignTo, status change, etc.

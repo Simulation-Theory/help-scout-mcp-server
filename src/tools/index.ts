@@ -78,15 +78,29 @@ export class ToolHandler extends Injectable {
     return [
       {
         name: 'getCurrentUser',
-        description: 'Gets the user profile of the currently authenticated user (the agent). CRITICAL: You MUST call this tool to get the user ID before you can reply to a conversation.',
+        description: 'Gets the user profile of the currently authenticated user (the agent). CRITICAL: You MUST call this tool to get the `userId` before you can reply to a conversation.',
         inputSchema: {
           type: 'object',
           properties: {},
         },
       },
       {
+        name: 'getConversationSummary',
+        description: 'Get conversation summary, including the primary customer\'s ID. CRITICAL: You MUST call this tool to get the `customerId` before you can reply to a conversation.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            conversationId: {
+              type: 'string',
+              description: 'The conversation ID to get summary for',
+            },
+          },
+          required: ['conversationId'],
+        },
+      },
+      {
         name: 'replyToConversation',
-        description: 'Adds a reply to an existing conversation. WORKFLOW: 1. Call getCurrentUser() to get the agent\'s user ID. 2. Call this tool with the conversationId, text, and the userId.',
+        description: 'Adds a reply to an existing conversation using the official /reply endpoint. WORKFLOW: 1. Call `getCurrentUser()` to get the `userId`. 2. Call `getConversationSummary()` to get the `customerId`. 3. Call this tool with all required IDs.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -100,10 +114,14 @@ export class ToolHandler extends Injectable {
             },
             userId: {
               type: 'number',
-              description: 'The ID of the user sending the reply. Get this from the getCurrentUser() tool.',
+              description: 'The ID of the user sending the reply. Get this from `getCurrentUser()`.',
+            },
+            customerId: {
+              type: 'number',
+              description: 'The ID of the customer being replied to. Get this from `getConversationSummary()`.',
             },
           },
-          required: ['conversationId', 'text', 'userId'],
+          required: ['conversationId', 'text', 'userId', 'customerId'],
         },
       },
       {
@@ -649,21 +667,20 @@ export class ToolHandler extends Injectable {
   }
 
   private async replyToConversation(args: unknown): Promise<CallToolResult> {
-    // Your system handles camelCasing, so we just need to parse it.
     const input = ReplyToConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
 
-    // THE CRUCIAL FIX IS HERE: We now include the 'user' object in the payload.
-    const threadPayload = {
-      type: 'reply',
+    // THE NEW PAYLOAD, MATCHING THE DOCS PERFECTLY
+    const replyPayload = {
       text: input.text,
-      user: input.userId, // <-- The magic ingredient!
+      user: input.userId,
+      customer: { id: input.customerId }, // <-- The customer object is key!
     };
 
-    // The endpoint for creating a thread is correct.
+    // THE NEW, CORRECT ENDPOINT
     await helpScoutClient.post(
-      `/conversations/${input.conversationId}/threads`,
-      threadPayload
+      `/conversations/${input.conversationId}/reply`,
+      replyPayload
     );
 
     return {
@@ -671,7 +688,7 @@ export class ToolHandler extends Injectable {
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: `Successfully replied to conversation ${input.conversationId} as user ${input.userId}.`,
+          message: `Successfully sent reply for conversation ${input.conversationId}.`,
         }, null, 2),
       }],
     };
