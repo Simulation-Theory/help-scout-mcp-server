@@ -56,6 +56,7 @@ import {
   CreateConversationInputSchema,
   ReplyToConversationInputSchema,
   DeleteConversationInputSchema,
+  GetCurrentUserInputSchema,
 } from '../schema/types.js';
 
 export class ToolHandler extends Injectable {
@@ -76,8 +77,16 @@ export class ToolHandler extends Injectable {
   async listTools(): Promise<Tool[]> {
     return [
       {
+        name: 'getCurrentUser',
+        description: 'Gets the user profile of the currently authenticated user (the agent). CRITICAL: You MUST call this tool to get the user ID before you can reply to a conversation.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
         name: 'replyToConversation',
-        description: 'Adds a reply to an existing conversation. This creates a new "message" thread from the agent.',
+        description: 'Adds a reply to an existing conversation. WORKFLOW: 1. Call getCurrentUser() to get the agent\'s user ID. 2. Call this tool with the conversationId, text, and the userId.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -89,8 +98,12 @@ export class ToolHandler extends Injectable {
               type: 'string',
               description: 'The content of the reply message.',
             },
+            userId: {
+              type: 'number',
+              description: 'The ID of the user sending the reply. Get this from the getCurrentUser() tool.',
+            },
           },
-          required: ['conversationId', 'text'],
+          required: ['conversationId', 'text', 'userId'],
         },
       },
       {
