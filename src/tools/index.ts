@@ -529,6 +529,9 @@ export class ToolHandler extends Injectable {
         case 'comprehensiveConversationSearch':
           result = await this.comprehensiveConversationSearch(request.params.arguments || {});
           break;
+        case 'getCurrentUser':
+          result = await this.getCurrentUser();
+          break;
         case 'replyToConversation':
           result = await this.replyToConversation(request.params.arguments || {});
           break;
@@ -624,19 +627,40 @@ export class ToolHandler extends Injectable {
     };
   }
 
+  private async getCurrentUser(): Promise<CallToolResult> {
+    const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
+    
+    // The /v2/users/me endpoint returns the authenticated user's details
+    const user = await helpScoutClient.get<any>('/users/me');
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          role: user.role,
+          usage: "SUCCESS: You now have the user ID. Use this 'id' in the 'userId' field when calling replyToConversation.",
+        }, null, 2),
+      }],
+    };
+  }
+
   private async replyToConversation(args: unknown): Promise<CallToolResult> {
+    // Your system handles camelCasing, so we just need to parse it.
     const input = ReplyToConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
 
-    // According to Help Scout docs, a reply is a new thread of type 'reply' or 'message'
-    // For simplicity, we'll create a 'reply' thread.
+    // THE CRUCIAL FIX IS HERE: We now include the 'user' object in the payload.
     const threadPayload = {
       type: 'reply',
       text: input.text,
+      user: input.userId, // <-- The magic ingredient!
     };
 
-    // The endpoint is /v2/conversations/{id}/reply, but creating a thread is more flexible.
-    // Let's use the thread creation endpoint.
+    // The endpoint for creating a thread is correct.
     await helpScoutClient.post(
       `/conversations/${input.conversationId}/threads`,
       threadPayload
@@ -647,7 +671,7 @@ export class ToolHandler extends Injectable {
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: `Successfully replied to conversation ${input.conversationId}.`,
+          message: `Successfully replied to conversation ${input.conversationId} as user ${input.userId}.`,
         }, null, 2),
       }],
     };
