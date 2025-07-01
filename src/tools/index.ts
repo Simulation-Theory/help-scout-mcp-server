@@ -691,24 +691,28 @@ export class ToolHandler extends Injectable {
   }
 
 
+  // AFTER (The Corrected, Beautiful Version)
   private async createConversation(args: unknown): Promise<CallToolResult> {
     const input = CreateConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
 
+    // THE FIX: Destructure userId and the rest of the input into separate variables.
+    const { userId, ...restOfInput } = input;
+
     // Ensure the thread has the user ID if it's a reply
-    const processedThreads = input.threads.map(thread => {
-      if (thread.type === 'reply') {
-        return { ...thread, user: input.userId };
+    const processedThreads = restOfInput.threads.map(thread => {
+      if (thread.type === 'reply' && userId) {
+        // Use the standalone userId variable here. It's perfectly typed!
+        return { ...thread, user: userId };
       }
       return thread;
     });
 
+    // Construct the final payload without the top-level userId. No 'delete' needed!
     const payload = {
-      ...input,
+      ...restOfInput,
       threads: processedThreads,
     };
-    // The user ID is in the thread, so we can remove it from the top level before sending
-    delete (payload as any).userId; 
 
     await helpScoutClient.post(
       '/conversations',
@@ -725,6 +729,7 @@ export class ToolHandler extends Injectable {
       }],
     };
   }
+
   private async deleteConversation(args: unknown): Promise<CallToolResult> {
     const input = DeleteConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
