@@ -685,11 +685,11 @@ export class ToolHandler extends Injectable {
     };
   }
 
+
   private async createConversation(args: unknown): Promise<CallToolResult> {
     const input = CreateConversationInputSchema.parse(args);
-    const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
+    const { helpScoutClient, logger } = this.services.resolve(['helpScoutClient', 'logger']);
 
-    // Extract the real message and the agent's user ID from the first thread
     const agentReplyThread = input.threads[0];
     if (!agentReplyThread || agentReplyThread.type !== 'reply' || !agentReplyThread.user) {
       throw new Error("createConversation requires a single thread of type 'reply' with a user ID.");
@@ -697,29 +697,24 @@ export class ToolHandler extends Injectable {
     const agentUserId = agentReplyThread.user;
     const agentMessageText = agentReplyThread.text;
 
-    // --- The Help Scout Two-Step Shimmy ---
+    logger.info('Starting Help Scout Three-Step for outbound conversation...');
 
-    // Step 1: Create the conversation container with a placeholder customer thread.
+    // --- Step 1: Create the conversation container ---
     const creationPayload = {
       mailboxId: input.mailboxId,
       subject: input.subject,
       customer: input.customer,
       type: input.type,
-      status: 'pending', // Start as pending, the reply will make it active.
+      status: 'pending',
       threads: [{
         type: 'customer',
-        text: `(Initial outbound request to ${input.customer.email})`, // Placeholder text
+        text: `(Initial outbound request to ${input.customer.email})`,
         customer: { email: input.customer.email }
       }],
       tags: input.tags,
     };
 
-    const creationResponse = await helpScoutClient.post(
-      '/conversations',
-      creationPayload as Record<string, unknown>
-    );
-
-    // Step 2: Extract the new conversation ID from the 'Location' header.
+    const creationResponse = await helpScoutClient.post('/conversations', creationPayload as Record<string, unknown>);
     const locationHeader = creationResponse.headers.location;
     if (!locationHeader) {
       throw new Error('Failed to create conversation: No Location header in response.');
@@ -728,20 +723,30 @@ export class ToolHandler extends Injectable {
     if (!conversationId) {
       throw new Error('Failed to parse new conversation ID from Location header.');
     }
+    logger.info(`Step 1 complete. Created conversation container: ${conversationId}`);
 
-    // Step 3: Post the actual agent reply to the newly created conversation.
+    // --- Step 2: Fetch the new conversation to get the generated customer ID ---
+    // We need to define a minimal Conversation type here for TypeScript
+    type Conversation = { id: string; customer?: { id: number } };
+    const newConversation = await helpScoutClient.get<Conversation>(`/conversations/${conversationId}`);
+    const customerId = newConversation.customer?.id;
+
+    if (!customerId) {
+      throw new Error(`Could not retrieve customer ID for new conversation ${conversationId}.`);
+    }
+    logger.info(`Step 2 complete. Fetched customer ID: ${customerId}`);
+
+    // --- Step 3: Post the actual agent reply with all correct IDs ---
     const replyPayload = {
       text: agentMessageText,
       user: agentUserId,
-      customer: { id: (input.customer as any).id }, // Use ID if available, otherwise Help Scout will cope
+      customer: { id: customerId }, // <-- Using the customerId we just fetched!
     };
 
-    await helpScoutClient.post(
-      `/conversations/${conversationId}/reply`,
-      replyPayload
-    );
+    await helpScoutClient.post(`/conversations/${conversationId}/reply`, replyPayload);
+    logger.info(`Step 3 complete. Posted agent reply to conversation ${conversationId}.`);
 
-    // If we want to set the status to active after replying
+    // Final step: Set the status correctly
     await helpScoutClient.patch(`/conversations/${conversationId}`, [{
       op: 'replace',
       path: '/status',
@@ -759,7 +764,7 @@ export class ToolHandler extends Injectable {
       }],
     };
   }
-
+  
   private async deleteConversation(args: unknown): Promise<CallToolResult> {
     const input = DeleteConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
