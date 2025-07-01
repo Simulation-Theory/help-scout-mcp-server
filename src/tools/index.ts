@@ -126,10 +126,11 @@ export class ToolHandler extends Injectable {
       },
       {
         name: 'createConversation',
-        description: 'Creates a new conversation in a specified inbox. Requires customer info, a subject, and at least one message thread.',
+        description: 'Creates a new outbound conversation TO a customer. WORKFLOW: 1. Call `getCurrentUser()` to get the `userId`. 2. Call this tool with the `userId` and ensure the first thread is of type `reply` and includes the `user` ID.',
         inputSchema: {
           type: 'object',
           properties: {
+            // ... (keep existing properties like mailboxId, subject, customer)
             mailboxId: {
               type: 'number',
               description: 'ID of the inbox where the conversation will be created. Use searchInboxes to find this.',
@@ -146,37 +147,32 @@ export class ToolHandler extends Injectable {
                 firstName: { type: 'string' },
                 lastName: { type: 'string' },
               },
-              description: 'Customer details. Must provide either id or email.',
+              description: 'The customer the conversation is being sent TO.',
             },
             threads: {
               type: 'array',
               items: {
                 type: 'object',
                 properties: {
-                  type: { enum: ['customer', 'note'], description: 'Type of the initial thread.' },
-                  text: { type: 'string', description: 'Content of the thread.' },
-                  customer: { type: 'object', properties: { email: { type: 'string' } }, description: 'Required if thread type is "customer".' },
+                  type: { enum: ['reply'], description: "To start an outbound conversation, this MUST be 'reply'." },
+                  text: { type: 'string', description: 'Content of the message.' },
                 },
                 required: ['type', 'text'],
               },
-              description: 'An array with at least one initial thread for the conversation.',
+              description: 'The initial message to send. Must be a single thread of type `reply`.',
             },
             status: {
               type: 'string',
               enum: ['active', 'pending', 'closed'],
               description: 'The initial status of the conversation.',
             },
-            assignTo: {
+            userId: { // <-- Make it clear this is required for this action
               type: 'number',
-              description: 'ID of the user to assign the conversation to. Use null for unassigned.',
+              description: 'The ID of the agent sending the message. Get this from `getCurrentUser()`.',
             },
-            tags: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'A list of tags to add to the conversation.',
-            },
+            // ... (other optional properties like tags, assignTo)
           },
-          required: ['mailboxId', 'subject', 'customer', 'threads', 'status'],
+          required: ['mailboxId', 'subject', 'customer', 'threads', 'status', 'userId'],
         },
       },
       {
@@ -694,32 +690,41 @@ export class ToolHandler extends Injectable {
     };
   }
 
+
   private async createConversation(args: unknown): Promise<CallToolResult> {
     const input = CreateConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
 
-    const response = await helpScoutClient.post<{ 'Resource-ID': string }>(
-      '/conversations',
-      input as Record<string, unknown>
-    );
+    // Ensure the thread has the user ID if it's a reply
+    const processedThreads = input.threads.map(thread => {
+      if (thread.type === 'reply') {
+        return { ...thread, user: input.userId };
+      }
+      return thread;
+    });
 
-    // The create endpoint returns the new ID in a 'Resource-ID' header, not the body.
-    // We'll need to adjust the client if we want to capture this, but for now, let's return a success message.
-    // A more advanced implementation would have the client return headers.
+    const payload = {
+      ...input,
+      threads: processedThreads,
+    };
+    // The user ID is in the thread, so we can remove it from the top level before sending
+    delete (payload as any).userId; 
+
+    await helpScoutClient.post(
+      '/conversations',
+      payload as Record<string, unknown>
+    );
     
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: 'Successfully created a new conversation.',
-          // In a real scenario, you'd want to get the new ID from the response headers.
-          // newConversationId: response['Resource-ID'] 
+          message: 'Successfully created a new outbound conversation.',
         }, null, 2),
       }],
     };
   }
-
   private async deleteConversation(args: unknown): Promise<CallToolResult> {
     const input = DeleteConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);

@@ -161,9 +161,10 @@ const CustomerInputSchema = z.object({
 
 // Schema for a thread when creating a conversation
 const ThreadInputSchema = z.object({
-  type: z.enum(['customer', 'note', 'reply']),
+  type: z.enum(['customer', 'note', 'reply']), // <-- Add 'reply'
   text: z.string(),
-  customer: z.object({ email: z.string().email() }).optional(), // Required for 'customer' type
+  customer: z.object({ email: z.string().email() }).optional(),
+  user: z.number().optional(), // <-- Add optional user ID for the thread
 });
 
 // Schema for the createConversation tool
