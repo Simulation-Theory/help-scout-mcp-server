@@ -685,24 +685,76 @@ export class ToolHandler extends Injectable {
     };
   }
 
-
   private async createConversation(args: unknown): Promise<CallToolResult> {
-    // The schema now perfectly matches the API payload structure.
-    const payload = CreateConversationInputSchema.parse(args);
+    const input = CreateConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
 
-    // No more complex logic needed. We just send the validated payload.
-    await helpScoutClient.post(
+    // Extract the real message and the agent's user ID from the first thread
+    const agentReplyThread = input.threads[0];
+    if (!agentReplyThread || agentReplyThread.type !== 'reply' || !agentReplyThread.user) {
+      throw new Error("createConversation requires a single thread of type 'reply' with a user ID.");
+    }
+    const agentUserId = agentReplyThread.user;
+    const agentMessageText = agentReplyThread.text;
+
+    // --- The Help Scout Two-Step Shimmy ---
+
+    // Step 1: Create the conversation container with a placeholder customer thread.
+    const creationPayload = {
+      mailboxId: input.mailboxId,
+      subject: input.subject,
+      customer: input.customer,
+      type: input.type,
+      status: 'pending', // Start as pending, the reply will make it active.
+      threads: [{
+        type: 'customer',
+        text: `(Initial outbound request to ${input.customer.email})`, // Placeholder text
+        customer: { email: input.customer.email }
+      }],
+      tags: input.tags,
+    };
+
+    const creationResponse = await helpScoutClient.post(
       '/conversations',
-      payload as Record<string, unknown>
+      creationPayload as Record<string, unknown>
     );
-    
+
+    // Step 2: Extract the new conversation ID from the 'Location' header.
+    const locationHeader = creationResponse.headers.location;
+    if (!locationHeader) {
+      throw new Error('Failed to create conversation: No Location header in response.');
+    }
+    const conversationId = locationHeader.split('/').pop();
+    if (!conversationId) {
+      throw new Error('Failed to parse new conversation ID from Location header.');
+    }
+
+    // Step 3: Post the actual agent reply to the newly created conversation.
+    const replyPayload = {
+      text: agentMessageText,
+      user: agentUserId,
+      customer: { id: (input.customer as any).id }, // Use ID if available, otherwise Help Scout will cope
+    };
+
+    await helpScoutClient.post(
+      `/conversations/${conversationId}/reply`,
+      replyPayload
+    );
+
+    // If we want to set the status to active after replying
+    await helpScoutClient.patch(`/conversations/${conversationId}`, [{
+      op: 'replace',
+      path: '/status',
+      value: input.status,
+    }]);
+
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: 'Successfully created a new outbound conversation.',
+          message: `Successfully created and sent outbound conversation ${conversationId}.`,
+          newConversationId: conversationId,
         }, null, 2),
       }],
     };

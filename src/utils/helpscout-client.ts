@@ -438,11 +438,12 @@ export class HelpScoutClient {
     return response.data;
   }
 
-  async post<T>(endpoint: string, data: Record<string, unknown>): Promise<T> {
+  async post<T>(endpoint: string, data: Record<string, unknown>): Promise<{ data: T, headers: any }> {
     const response = await this.executeWithRetry<T>(() =>
       this.client.post<T>(endpoint, data)
     );
-    return response.data;
+    // We now return both the data and the headers!
+    return { data: response.data, headers: response.headers };
   }
 
   async patch<T>(endpoint:string, data: Record<string, unknown>[]): Promise<T> {
