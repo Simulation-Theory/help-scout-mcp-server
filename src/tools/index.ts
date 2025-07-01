@@ -685,6 +685,30 @@ export class ToolHandler extends Injectable {
     };
   }
 
+  private async getCustomerIdByEmail(email: string): Promise<number> {
+    const { helpScoutClient, logger } = this.services.resolve(['helpScoutClient', 'logger']);
+    
+    logger.info(`Searching for customer ID by email: ${email}`);
+    
+    // The response is a paginated list, so we need to handle the _embedded structure
+    type CustomerSearchResponse = {
+      _embedded: {
+        customers: { id: number }[];
+      };
+    };
+
+    const response = await helpScoutClient.get<CustomerSearchResponse>(`/customers?email=${encodeURIComponent(email)}`);
+    
+    const customer = response._embedded?.customers?.[0];
+    
+    if (!customer?.id) {
+      throw new Error(`Could not find a customer with the email: ${email}`);
+    }
+    
+    logger.info(`Found customer ID: ${customer.id}`);
+    return customer.id;
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -700,7 +724,7 @@ export class ToolHandler extends Injectable {
     const agentUserId = agentReplyThread.user;
     const agentMessageText = agentReplyThread.text;
 
-    logger.info('Starting Help Scout outbound conversation process...');
+    logger.info('Starting Help Scout Customer-First outbound process...');
 
     // --- Step 1: Create the conversation container ---
     const creationPayload = {
@@ -726,32 +750,12 @@ export class ToolHandler extends Injectable {
     
     logger.info(`Step 1 complete. Created conversation container: ${conversationId}`);
 
-    // --- Step 2: Fetch the new conversation with a retry mechanism ---
-    let customerId: number | undefined;
-    const maxRetries = 3;
-    const retryDelay = 750; // 750 milliseconds
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      logger.info(`Fetching conversation details (Attempt ${attempt}/${maxRetries})...`);
-      type Conversation = { id: string; customer?: { id: number } };
-      const newConversation = await helpScoutClient.get<Conversation>(`/conversations/${conversationId}`);
-      
-      if (newConversation.customer?.id) {
-        customerId = newConversation.customer.id;
-        logger.info(`Step 2 complete. Fetched customer ID: ${customerId}`);
-        break; // Success! Exit the loop.
-      }
-
-      if (attempt < maxRetries) {
-        logger.warn(`Customer ID not available yet. Retrying in ${retryDelay}ms...`);
-        await this.sleep(retryDelay);
-      }
+    // --- Step 2: Find the customer ID directly via their email ---
+    if (!input.customer.email) {
+      throw new Error("Customer email is required to find the customer ID for the reply.");
     }
-
-    if (!customerId) {
-      // This will only be reached if all retries fail.
-      throw new Error(`Could not retrieve customer ID for new conversation ${conversationId} after ${maxRetries} attempts.`);
-    }
+    const customerId = await this.getCustomerIdByEmail(input.customer.email);
+    logger.info(`Step 2 complete. Found customer ID: ${customerId}`);
 
     // --- Step 3: Post the actual agent reply with all correct IDs ---
     const replyPayload = {
@@ -781,7 +785,7 @@ export class ToolHandler extends Injectable {
       }],
     };
   }
-
+  
   private async deleteConversation(args: unknown): Promise<CallToolResult> {
     const input = DeleteConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
