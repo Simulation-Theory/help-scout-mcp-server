@@ -274,20 +274,6 @@ export class ToolHandler extends Injectable {
         },
       },
       {
-        name: 'getConversationSummary',
-        description: 'Get conversation summary with first customer message and latest staff reply',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            conversationId: {
-              type: 'string',
-              description: 'The conversation ID to get summary for',
-            },
-          },
-          required: ['conversationId'],
-        },
-      },
-      {
         name: 'getThreads',
         description: 'Get all thread messages for a conversation',
         inputSchema: {
@@ -735,7 +721,7 @@ export class ToolHandler extends Injectable {
       status: 'pending',
       threads: [{
         type: 'customer',
-        text: `(Initial outbound request to ${input.customer.email})`,
+        text: `Conversation initiated by agent.`,
         customer: { email: input.customer.email }
       }],
       tags: input.tags,
@@ -785,7 +771,7 @@ export class ToolHandler extends Injectable {
       }],
     };
   }
-  
+
   private async deleteConversation(args: unknown): Promise<CallToolResult> {
     const input = DeleteConversationInputSchema.parse(args);
     const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
