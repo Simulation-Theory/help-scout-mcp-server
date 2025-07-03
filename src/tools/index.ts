@@ -651,15 +651,16 @@ export class ToolHandler extends Injectable {
     const replyPayload = {
       text: input.text,
       user: input.userId,
-      customer: { id: input.customerId }, // <-- The customer object is key!
+      customer: { id: input.customerId },
+      status: 'pending',
+      assignTo: input.userId,
     };
 
-    // THE NEW, CORRECT ENDPOINT
     await helpScoutClient.post(
       `/conversations/${input.conversationId}/reply`,
       replyPayload
     );
-
+ 
     return {
       content: [{
         type: 'text',
