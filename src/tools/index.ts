@@ -643,30 +643,61 @@ export class ToolHandler extends Injectable {
     };
   }
 
+  // This is my original, more robust approach. Let's try it again!
   private async replyToConversation(args: unknown): Promise<CallToolResult> {
+    // We'll use the flexible schema with the optional fields
     const input = ReplyToConversationInputSchema.parse(args);
-    const { helpScoutClient } = this.services.resolve(['helpScoutClient']);
+    const { helpScoutClient, logger } = this.services.resolve(['helpScoutClient', 'logger']);
 
-    // THE NEW PAYLOAD, MATCHING THE DOCS PERFECTLY
+    // --- STEP 1: Post the reply. ---
+    // We'll send a clean payload with only what's needed for the message itself.
     const replyPayload = {
       text: input.text,
       user: input.userId,
       customer: { id: input.customerId },
-      status: 'pending',
-      assignTo: input.userId,
     };
 
     await helpScoutClient.post(
       `/conversations/${input.conversationId}/reply`,
       replyPayload
     );
- 
+    logger.info(`Reply sent to conversation ${input.conversationId} by user ${input.userId}`);
+
+    // --- STEP 2: Explicitly update the conversation with a PATCH request. ---
+    // This is a separate, direct command that the API cannot ignore.
+    const patchOperations: { op: 'replace'; path: string; value: any }[] = [];
+
+    // We'll build our list of updates.
+    // Set the status to pending.
+    patchOperations.push({
+      op: 'replace',
+      path: '/status',
+      value: 'pending', // Hardcoding to 'pending' as you wanted!
+    });
+
+    // And assign it to the user who replied.
+    patchOperations.push({
+      op: 'replace',
+      path: '/assignTo',
+      value: input.userId,
+    });
+
+    logger.info('Patching conversation with new status and assignment', {
+      conversationId: input.conversationId,
+      operations: patchOperations,
+    });
+    
+    // Now we send the update command!
+    await helpScoutClient.patch(`/conversations/${input.conversationId}`, patchOperations);
+
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           success: true,
           message: `Successfully sent reply for conversation ${input.conversationId}.`,
+          updatedStatus: 'pending',
+          assignedTo: input.userId,
         }, null, 2),
       }],
     };
