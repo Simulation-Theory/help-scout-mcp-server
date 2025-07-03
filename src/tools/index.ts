@@ -643,14 +643,11 @@ export class ToolHandler extends Injectable {
     };
   }
 
-  // This is my original, more robust approach. Let's try it again!
   private async replyToConversation(args: unknown): Promise<CallToolResult> {
-    // We'll use the flexible schema with the optional fields
     const input = ReplyToConversationInputSchema.parse(args);
     const { helpScoutClient, logger } = this.services.resolve(['helpScoutClient', 'logger']);
 
-    // --- STEP 1: Post the reply. ---
-    // We'll send a clean payload with only what's needed for the message itself.
+    // --- STEP 1: Post the reply. This part is working, which is great! ---
     const replyPayload = {
       text: input.text,
       user: input.userId,
@@ -661,42 +658,42 @@ export class ToolHandler extends Injectable {
       `/conversations/${input.conversationId}/reply`,
       replyPayload
     );
-    logger.info(`Reply sent to conversation ${input.conversationId} by user ${input.userId}`);
+    logger.info(`Reply sent to conversation ${input.conversationId}.`);
 
-    // --- STEP 2: Explicitly update the conversation with a PATCH request. ---
-    // This is a separate, direct command that the API cannot ignore.
-    const patchOperations: { op: 'replace'; path: string; value: any }[] = [];
-
-    // We'll build our list of updates.
-    // Set the status to pending.
-    patchOperations.push({
+    // --- STEP 2: Update the status with its own, separate PATCH request. ---
+    const statusPatchPayload = {
       op: 'replace',
       path: '/status',
-      value: 'pending', // Hardcoding to 'pending' as you wanted!
+      value: 'pending',
+    };
+    logger.info('Attempting to patch conversation status...', { 
+        conversationId: input.conversationId, 
+        payload: statusPatchPayload 
     });
+    await helpScoutClient.patch(`/conversations/${input.conversationId}`, statusPatchPayload);
+    logger.info('Status patch request sent.');
 
-    // And assign it to the user who replied.
-    patchOperations.push({
+
+    // --- STEP 3: Update the assignment with a second, separate PATCH request. ---
+    const assignmentPatchPayload = {
       op: 'replace',
       path: '/assignTo',
       value: input.userId,
+    };
+    logger.info('Attempting to patch conversation assignment...', { 
+        conversationId: input.conversationId, 
+        payload: assignmentPatchPayload 
     });
-
-    logger.info('Patching conversation with new status and assignment', {
-      conversationId: input.conversationId,
-      operations: patchOperations,
-    });
-    
-    // Now we send the update command!
-    await helpScoutClient.patch(`/conversations/${input.conversationId}`, patchOperations);
+    await helpScoutClient.patch(`/conversations/${input.conversationId}`, assignmentPatchPayload);
+    logger.info('Assignment patch request sent.');
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: `Successfully sent reply for conversation ${input.conversationId}.`,
-          updatedStatus: 'pending',
+          message: `Successfully sent reply and initiated updates for conversation ${input.conversationId}.`,
+          finalStatus: 'pending',
           assignedTo: input.userId,
         }, null, 2),
       }],
